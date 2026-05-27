@@ -1,5 +1,5 @@
 const express = require('express');
-const cors = require('cors');
+
 const morgan = require('morgan');
 const dotenv = require('dotenv');
 const connectDB = require('./config/db');
@@ -13,6 +13,14 @@ connectDB();
 const app = express();
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
+
+const cors = require('cors');
+
+app.use(cors({
+  origin: 'https://nexus-dashboard-six-orpin.vercel.app',
+  credentials: true
+}));
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
