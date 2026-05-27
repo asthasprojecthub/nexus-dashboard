@@ -17,7 +17,10 @@ const app = express();
 const cors = require('cors');
 
 app.use(cors({
-  origin: 'https://nexus-dashboard-six-orpin.vercel.app',
+  origin: [
+    'https://nexus-dashboard-six-orpin.vercel.app',
+    'https://nexus-dashboard-git-main-asthas-project-2909.vercel.app'
+  ],
   credentials: true
 }));
 
