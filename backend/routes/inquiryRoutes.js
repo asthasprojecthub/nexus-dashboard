@@ -17,6 +17,6 @@ router.route('/').get(getInquiries).post(createInquiry);
 router.route('/:id')
   .get(getInquiry)
   .put(updateInquiry)
-  .delete(authorize('admin', 'manager'), deleteInquiry);
+  .delete(authorize('admin', 'estimator'), deleteInquiry);
 
 module.exports = router;

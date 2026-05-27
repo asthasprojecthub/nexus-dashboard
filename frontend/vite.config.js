@@ -8,6 +8,8 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:5000',
+
+        //target:'https://nexus-dashboard-ij0d.onrender.com',
         changeOrigin: true,
       },
     },

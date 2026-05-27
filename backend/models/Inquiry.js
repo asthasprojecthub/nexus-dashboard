@@ -4,7 +4,7 @@ const Counter = require('./Counter');
 const inquirySchema = new mongoose.Schema(
   {
     inquiryId: {
-      type: Number,
+      type: String,
       unique: true,
     },
 
@@ -74,7 +74,7 @@ const inquirySchema = new mongoose.Schema(
         'New',
         'Under Discussion',
         'Quotation Submit',
-        'Negotiation',
+        'Commercial Discussion',
         'Order Recieved',
         'Inquiry Hold',
         'Inq. Lost',

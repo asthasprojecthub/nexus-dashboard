@@ -4,9 +4,11 @@ const Customer = require('../models/Customer');
 const createNotification = require('../services/notificationService');
 
 
-// @desc Get all inquiries
-// @route GET /api/inquiries
-// @access Private
+// ======================================================
+// @desc    Get All Inquiries
+// @route   GET /api/inquiries
+// @access  Private
+// ======================================================
 const getInquiries = async (
   req,
   res,
@@ -24,23 +26,19 @@ const getInquiries = async (
 
     const query = {};
 
-    // Filters
-    if (status) {
-      query.status = status;
-    }
-
-    if (priority) {
-      query.priority = priority;
-    }
-
-    if (productType) {
-      query.productType =
-        productType;
-    }
-
+    // =====================================
     // Search
+    // =====================================
+
     if (search) {
       query.$or = [
+        {
+          inquiryId: {
+            $regex: search,
+            $options: 'i',
+          },
+        },
+
         {
           customerName: {
             $regex: search,
@@ -56,13 +54,6 @@ const getInquiries = async (
         },
 
         {
-          inquiryId: {
-            $regex: search,
-            $options: 'i',
-          },
-        },
-
-        {
           mobileNumber: {
             $regex: search,
             $options: 'i',
@@ -71,20 +62,44 @@ const getInquiries = async (
       ];
     }
 
+    // =====================================
+    // Filters
+    // =====================================
+
+    if (
+      status &&
+      status !== 'All status'
+    ) {
+      query.status = status;
+    }
+
+    if (priority) {
+      query.priority = priority;
+    }
+
+    if (productType) {
+      query.productType =
+        productType;
+    }
+
     const skip =
       (Number(page) - 1) *
       Number(limit);
 
     const inquiries =
       await Inquiry.find(query)
+
         .populate(
           'createdBy',
-          'name'
+          'name email'
         )
+
         .sort({
           createdAt: -1,
         })
+
         .skip(skip)
+
         .limit(Number(limit));
 
     const total =
@@ -116,9 +131,11 @@ const getInquiries = async (
 };
 
 
-// @desc Get single inquiry
-// @route GET /api/inquiries/:id
-// @access Private
+// ======================================================
+// @desc    Get Single Inquiry
+// @route   GET /api/inquiries/:id
+// @access  Private
+// ======================================================
 const getInquiry = async (
   req,
   res,
@@ -128,11 +145,10 @@ const getInquiry = async (
     const inquiry =
       await Inquiry.findById(
         req.params.id
-      )
-        .populate(
-          'createdBy',
-          'name email'
-        );
+      ).populate(
+        'createdBy',
+        'name email'
+      );
 
     if (!inquiry) {
       return res.status(404).json({
@@ -152,9 +168,11 @@ const getInquiry = async (
 };
 
 
-// @desc Create inquiry
-// @route POST /api/inquiries
-// @access Private
+// ======================================================
+// @desc    Create Inquiry
+// @route   POST /api/inquiries
+// @access  Private
+// ======================================================
 const createInquiry = async (
   req,
   res,
@@ -164,15 +182,58 @@ const createInquiry = async (
     req.body.createdBy =
       req.user._id;
 
+    // =====================================
+    // Generate Inquiry Number
+    // =====================================
+
+    const totalInquiries =
+      await Inquiry.countDocuments();
+
+    const nextNumber =
+      1350 + totalInquiries;
+
+    req.body.inquiryId =
+      `INQ${nextNumber}`;
+
+    // =====================================
+    // Rename Negotiation Status
+    // =====================================
+
+    if (
+      req.body.status ===
+      'Negotiation'
+    ) {
+      req.body.status =
+        'Commercial Discussion';
+    }
+
+    // =====================================
+    // File Uploads
+    // =====================================
+
+    if (req.files) {
+      req.body.attachments =
+        req.files.map(
+          (file) => file.path
+        );
+    }
+
+    // =====================================
+    // Create Inquiry
+    // =====================================
+
     const inquiry =
       await Inquiry.create(
         req.body
       );
 
+    // =====================================
     // Create Notification
+    // =====================================
+
     await createNotification({
       title:
-        'New Inquiry Added',
+        'New Inquiry Created',
 
       message: `Inquiry ${inquiry.inquiryId} created for ${inquiry.customerName}`,
 
@@ -184,15 +245,17 @@ const createInquiry = async (
       relatedInquiry:
         inquiry._id,
 
-      // Outlook Email
       sendEmail: true,
 
       emailTo:
         'project.intern@nexusautomech.com',
     });
 
+    // =====================================
     // Auto Create Customer
-    let customer =
+    // =====================================
+
+    const existingCustomer =
       await Customer.findOne({
         $or: [
           {
@@ -208,7 +271,7 @@ const createInquiry = async (
       });
 
     if (
-      !customer &&
+      !existingCustomer &&
       inquiry.customerName
     ) {
       await Customer.create({
@@ -227,6 +290,9 @@ const createInquiry = async (
         location:
           inquiry.location,
 
+        workProfile:
+          inquiry.workProfile || '',
+
         createdBy:
           req.user._id,
       });
@@ -237,7 +303,7 @@ const createInquiry = async (
         inquiry._id
       ).populate(
         'createdBy',
-        'name'
+        'name email'
       );
 
     res.status(201).json({
@@ -250,9 +316,11 @@ const createInquiry = async (
 };
 
 
-// @desc Update inquiry
-// @route PUT /api/inquiries/:id
-// @access Private
+// ======================================================
+// @desc    Update Inquiry
+// @route   PUT /api/inquiries/:id
+// @access  Private
+// ======================================================
 const updateInquiry = async (
   req,
   res,
@@ -272,10 +340,41 @@ const updateInquiry = async (
       });
     }
 
+    // =====================================
+    // Rename Negotiation
+    // =====================================
+
+    if (
+      req.body.status ===
+      'Negotiation'
+    ) {
+      req.body.status =
+        'Commercial Discussion';
+    }
+
+    // =====================================
+    // File Upload
+    // =====================================
+
+    if (req.files) {
+      req.body.attachments =
+        req.files.map(
+          (file) => file.path
+        );
+    }
+
+    // =====================================
+    // Detect Status Change
+    // =====================================
+
     const statusChanged =
       req.body.status &&
       req.body.status !==
         inquiry.status;
+
+    // =====================================
+    // Update Inquiry
+    // =====================================
 
     const updatedInquiry =
       await Inquiry.findByIdAndUpdate(
@@ -287,15 +386,18 @@ const updateInquiry = async (
         }
       ).populate(
         'createdBy',
-        'name'
+        'name email'
       );
 
-    // Notification
+    // =====================================
+    // Update Notification
+    // =====================================
+
     await createNotification({
       title:
         'Inquiry Updated',
 
-      message: `Inquiry ${updatedInquiry.inquiryId} updated successfully`,
+      message: `${updatedInquiry.inquiryId} updated successfully`,
 
       type: 'info',
 
@@ -311,13 +413,16 @@ const updateInquiry = async (
         'project.intern@nexusautomech.com',
     });
 
+    // =====================================
     // Status Change Notification
+    // =====================================
+
     if (statusChanged) {
       await createNotification({
         title:
-          'Status Changed',
+          'Inquiry Status Changed',
 
-        message: `Inquiry ${updatedInquiry.inquiryId} moved to ${updatedInquiry.status}`,
+        message: `${updatedInquiry.inquiryId} moved to ${updatedInquiry.status}`,
 
         type: 'status',
 
@@ -344,9 +449,11 @@ const updateInquiry = async (
 };
 
 
-// @desc Delete inquiry
-// @route DELETE /api/inquiries/:id
-// @access Private
+// ======================================================
+// @desc    Delete Inquiry
+// @route   DELETE /api/inquiries/:id
+// @access  Private
+// ======================================================
 const deleteInquiry = async (
   req,
   res,
@@ -366,14 +473,13 @@ const deleteInquiry = async (
       });
     }
 
-    // Notification
     await createNotification({
       title:
         'Inquiry Deleted',
 
-      message: `Inquiry ${inquiry.inquiryId} deleted successfully`,
+      message: `${inquiry.inquiryId} deleted successfully`,
 
-      type: 'warning',
+      type: 'info',
 
       recipient:
         req.user._id,
@@ -397,9 +503,11 @@ const deleteInquiry = async (
 };
 
 
-// @desc Get follow-ups
-// @route GET /api/inquiries/follow-ups
-// @access Private
+// ======================================================
+// @desc    Get Follow Ups
+// @route   GET /api/inquiries/follow-ups
+// @access  Private
+// ======================================================
 const getFollowUps = async (
   req,
   res,
@@ -429,6 +537,11 @@ const getFollowUps = async (
           ],
         },
       })
+
+        .populate(
+          'createdBy',
+          'name'
+        )
 
         .sort({
           nextFollowUpDate: 1,

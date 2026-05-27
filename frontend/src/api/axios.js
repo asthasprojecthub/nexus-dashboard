@@ -1,7 +1,8 @@
 import axios from 'axios';
 
 const API = axios.create({
-  baseURL: '/api',
+  // baseURL: '/api',
+  baseURL: 'https://nexus-dashboard-ij0d.onrender.com/api',
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -11,6 +12,7 @@ API.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
   return config;
 });
 
