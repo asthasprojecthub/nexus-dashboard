@@ -86,7 +86,7 @@ const App = () => (
       <ToastProvider>
         <Routes>
           {/* Public */}
-          <Route path="/login" element={<LoginPage />} />
+          <Route path="/auth/login" element={<LoginPage />} />
 
           {/* Protected — all roles */}
           <Route element={<ProtectedRoute />}>
