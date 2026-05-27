@@ -27,7 +27,7 @@ const STATUSES = [
   'New',
   'Under Discussion',
   'Quotation Submit',
-  'Negotiation',
+  'Commarcial Discussion',
   'Order Recieved',
   'Inquiry Hold',
   'Inq. Lost',
