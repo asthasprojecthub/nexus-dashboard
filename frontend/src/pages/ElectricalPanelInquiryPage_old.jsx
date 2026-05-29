@@ -5,11 +5,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
-  Building2, FolderOpen, Zap, Settings, Cpu, Shield,
-  FileText, ChevronLeft, AlertCircle, CheckCircle2,
-  ClipboardCheck, Info, Plus, Trash2, User,
+  Building2, User, Phone, Mail, MapPin, FolderOpen, Factory, Zap,
+  Settings, Cpu, Shield, FileText, ChevronLeft, Save, Send, Eye,
+  AlertCircle, CheckCircle2, ClipboardCheck, UploadCloud, Info,
 } from 'lucide-react';
 
 import API from '../api/axios';
@@ -17,73 +17,65 @@ import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import Spinner from '../components/common/Spinner';
 
+// Extended components (FormComponents.extended.jsx)
 import {
-  FormField, Input, Textarea, Button,
+  FormField, Input, Select, Textarea, Button, Card,
   SectionCard, AutocompleteInput, SearchableSelect, MultiCheckSelect,
-  DynamicLoadTable, ControlMatrixTable,
+  DynamicLoadTable, ControlMatrixTable, DocumentUploader,
   FormDivider, InlineToggle, StepProgressBar,
 } from '../components/common/FormComponents.extended';
 
+// Master data
 import {
   PANEL_TYPES, INDUSTRY_TYPES, OFFER_TYPES, VOLTAGE_OPTIONS,
   FREQUENCY_OPTIONS, IP_RATINGS, INSTALLATION_TYPES,
   SHORT_CIRCUIT_OPTIONS, PANEL_MOUNTING_TYPES, ENCLOSURE_STANDARDS,
   CONTROL_COMPONENTS, PRIORITY_OPTIONS, DEFAULT_LOAD_ROW,
-  DELIVERY_TERMS, PAYMENT_TERMS, CONTROL_TYPE_OPTIONS,
-  BUSBAR_MATERIALS, DESIGNATION_OPTIONS,
+  RATING_UNITS, DELIVERY_TERMS, PAYMENT_TERMS, CONTROL_TYPE_OPTIONS,
 } from '../data/masterData';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const DEFAULT_CONTACT = () => ({
-  id: Date.now() + Math.random(),
-  name: '',
-  phone: '',
-  email: '',
-  designation: '',
-});
-
-// Roles that can edit Priority
-const CAN_EDIT_PRIORITY = ['admin', 'manager', 'estimator'];
-
+// ─── Default form state ───────────────────────────────────────────────────────
 const defaultForm = () => ({
   // Section 1 — Client Info
   inquiryDate:    new Date().toISOString().split('T')[0],
   rfqNumber:      '',
   companyName:    '',
-  contacts:       [DEFAULT_CONTACT()],   // replaces single contactPerson
+  contactPerson:  '',
+  designation:    '',
+  mobileNumber:   '',
+  alternatePhone: '',
+  email:          '',
   siteAddress:    '',
   city:           '',
 
   // Section 2 — Project Details
-  projectName:      '',
-  industryType:     '',
-  offerType:        '',
-  previousOrderRef: '',   // shown only when offerType === 'repeat'
-  priority:         'Medium',
-  estimatedValue:   '',
+  projectName:    '',
+  industryType:   '',
+  offerType:      '',
+  priority:       'Medium',
+  estimatedValue: '',
 
   // Section 3 — Panel Type
-  panelTypes:             [],
+  panelTypes:     [],           // MultiCheckSelect → string[]
   applicationDescription: '',
 
   // Section 4 — Technical Specs
-  supplyVoltage:        '',
-  frequency:            '50 Hz',
-  panelAreaClass:       '',
-  ipRating:             '',
-  ipRatingCustom:       '',   // shown when ipRating === 'OTHER'
-  installationType:     '',
+  supplyVoltage:      '',
+  frequency:          '50 Hz',
+  panelAreaClass:     '',
+  ipRating:           '',
+  installationType:   '',
   shortCircuitCapacity: '',
-  busbarMaterial:       'Aluminium',
-  enclosureStandard:    '',
+  ambientTemp:        '30–45°C',
+  busbarMaterial:     'Aluminium',
+  enclosureStandard:  '',
 
   // Section 5 — Load Details
   loadDetails: [DEFAULT_LOAD_ROW()],
 
   // Section 6 — Control & Monitoring
-  controlType:   'Automatic',
-  controlMatrix: {},
+  controlType:    'Automatic',
+  controlMatrix:  {},           // { [componentKey]: { required, brand, model } }
 
   // Section 7 — Standards & Compliance
   panelMounting:         '',
@@ -96,73 +88,69 @@ const defaultForm = () => ({
   onsiteSupport:         false,
   paymentTerms:          '',
 
-  // Section 8 — Notes & Review
-  additionalNotes:  '',
-  internalRemarks:  '',
-  preparedBy:       '',
+  // Section 8 — Additional Notes / Internal Review
+  additionalNotes:   '',
+  internalRemarks:   '',
+  preparedBy:        '',
 
   // Meta
-  status:           'New',
-  productType:      '',
-  customerName:     '',
+  status:    'New',
+  productType: '',   // legacy field — auto-derived from panelTypes[0]
+  customerName: '',  // auto-derived from companyName for legacy compat
   nextFollowUpDate: '',
-  reviewStatus:     '',
 });
 
+// ─── Section scroll anchors ────────────────────────────────────────────────
 const SECTIONS = [
   'Client Info', 'Project', 'Panel Type', 'Tech Specs',
-  'Load Details', 'Control', 'Standards', 'Notes',
+  'Load Details', 'Control & Monitoring', 'Standards', 'Notes & Review',
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
 const ElectricalPanelInquiryPage = () => {
-  const navigate = useNavigate();
-  const { id }   = useParams();
-  const toast    = useToast();
-  const { user } = useAuth();
+  const navigate    = useNavigate();
+  const { id }      = useParams();           // present when editing
+  const location    = useLocation();
+  const toast       = useToast();
+  const { user }    = useAuth();
 
-  const isEdit        = Boolean(id);
-  const canEditPriority = CAN_EDIT_PRIORITY.includes(user?.role);
+  const isEdit = Boolean(id);
 
-  const [form,        setForm]        = useState(defaultForm());
-  const [errors,      setErrors]      = useState({});
-  const [submitting,  setSubmitting]  = useState(false);
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [form, setForm]               = useState(defaultForm());
+  const [errors, setErrors]           = useState({});
+  const [submitting, setSubmitting]   = useState(false);
   const [pageLoading, setPageLoading] = useState(isEdit);
+  const [extracting, setExtracting]   = useState(false);
+  const [extractedCount, setExtractedCount] = useState(0);
 
-  // Autocomplete suggestion pools
+  // Customer / company name suggestions from existing Customer records
   const [companySuggestions, setCompanySuggestions] = useState([]);
-  const [contactNameSuggestions, setContactNameSuggestions] = useState([]);
-  const [citySuggestions, setCitySuggestions] = useState([]);
-  // Past inquiries for "Repeat Order" selector
-  const [pastInquiries, setPastInquiries] = useState([]);
+  const [contactSuggestions, setContactSuggestions] = useState([]);
+  const [citysuggestions,    setCitySuggestions]    = useState([]);
 
-  // Step progress scroll tracking
+  // Scroll position tracking for step indicator
   const [activeSection, setActiveSection] = useState(0);
   const sectionRefs = useRef([]);
 
-  // ── Load existing inquiry (edit mode) ──────────────────────────────────────
+  // ── Load existing inquiry (edit mode) ─────────────────────────────────────
   useEffect(() => {
     if (!isEdit) return;
     (async () => {
       try {
         const { data } = await API.get(`/inquiries/${id}`);
         const d = data.data;
-        // Normalise contacts: old single-contact records → array
-        let contacts = d.contacts && d.contacts.length
-          ? d.contacts
-          : [{ id: Date.now(), name: d.contactPerson || '', phone: d.mobileNumber || '', email: d.email || '', designation: d.designation || '' }];
         setForm(prev => ({
           ...prev,
           ...d,
-          inquiryDate:      d.inquiryDate      ? new Date(d.inquiryDate).toISOString().split('T')[0]      : prev.inquiryDate,
-          deliveryDate:     d.deliveryDate      ? new Date(d.deliveryDate).toISOString().split('T')[0]     : '',
-          nextFollowUpDate: d.nextFollowUpDate  ? new Date(d.nextFollowUpDate).toISOString().split('T')[0] : '',
-          loadDetails:      d.loadDetails?.length ? d.loadDetails : [DEFAULT_LOAD_ROW()],
-          controlMatrix:    d.controlMatrix || {},
-          panelTypes:       d.panelTypes || (d.productType ? [d.productType] : []),
-          contacts,
+          inquiryDate:  d.inquiryDate    ? new Date(d.inquiryDate).toISOString().split('T')[0]    : prev.inquiryDate,
+          deliveryDate: d.deliveryDate   ? new Date(d.deliveryDate).toISOString().split('T')[0]   : '',
+          nextFollowUpDate: d.nextFollowUpDate ? new Date(d.nextFollowUpDate).toISOString().split('T')[0] : '',
+          loadDetails:  d.loadDetails?.length ? d.loadDetails : [DEFAULT_LOAD_ROW()],
+          controlMatrix: d.controlMatrix || {},
+          panelTypes:   d.panelTypes || (d.productType ? [d.productType] : []),
         }));
       } catch {
         toast.error('Failed to load inquiry');
@@ -173,32 +161,20 @@ const ElectricalPanelInquiryPage = () => {
     })();
   }, [id, isEdit]);
 
-  // ── Customer suggestions ────────────────────────────────────────────────────
+  // ── Fetch customer suggestions ────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
         const { data } = await API.get('/customers?limit=200&select=companyName,contactPerson,city');
         const customers = data.data || [];
         setCompanySuggestions([...new Set(customers.map(c => c.companyName).filter(Boolean))]);
-        setContactNameSuggestions([...new Set(customers.map(c => c.contactPerson).filter(Boolean))]);
+        setContactSuggestions([...new Set(customers.map(c => c.contactPerson).filter(Boolean))]);
         setCitySuggestions([...new Set(customers.map(c => c.city).filter(Boolean))]);
       } catch { /* non-fatal */ }
     })();
   }, []);
 
-  // ── Past inquiries (for Repeat Order selector) ─────────────────────────────
-  useEffect(() => {
-    if (form.offerType !== 'repeat') return;
-    if (pastInquiries.length > 0) return;
-    (async () => {
-      try {
-        const { data } = await API.get('/inquiries?limit=100&status=Order Recieved&select=inquiryId,projectName,companyName');
-        setPastInquiries(data.data || []);
-      } catch { /* non-fatal */ }
-    })();
-  }, [form.offerType]);
-
-  // ── Section scroll tracker ──────────────────────────────────────────────────
+  // ── Scroll section tracker ────────────────────────────────────────────────
   useEffect(() => {
     const handler = () => {
       const offsets = sectionRefs.current.map(r => r?.getBoundingClientRect().top ?? Infinity);
@@ -210,88 +186,108 @@ const ElectricalPanelInquiryPage = () => {
     return () => main?.removeEventListener('scroll', handler);
   }, []);
 
-  // ── Generic field setter ────────────────────────────────────────────────────
+  // ── Field helper ──────────────────────────────────────────────────────────
   const set = useCallback((field) => (val) => {
     const value = val?.target !== undefined ? val.target.value : val;
     setForm(prev => ({ ...prev, [field]: value }));
     setErrors(prev => ({ ...prev, [field]: '' }));
   }, []);
 
-  // ── Contacts helpers ────────────────────────────────────────────────────────
-  const addContact = () => {
-    setForm(prev => ({ ...prev, contacts: [...prev.contacts, DEFAULT_CONTACT()] }));
-  };
-
-  const removeContact = (cid) => {
-    setForm(prev => ({
-      ...prev,
-      contacts: prev.contacts.filter(c => c.id !== cid),
-    }));
-  };
-
-  const updateContact = (cid, field, val) => {
-    setForm(prev => ({
-      ...prev,
-      contacts: prev.contacts.map(c => c.id === cid ? { ...c, [field]: val } : c),
-    }));
-    setErrors(prev => ({ ...prev, [`contact_${cid}_${field}`]: '' }));
-  };
-
-  // ── Validation ──────────────────────────────────────────────────────────────
+  // ── Validation ────────────────────────────────────────────────────────────
   const validate = () => {
     const e = {};
-    if (!form.companyName.trim())     e.companyName = 'Company name is required';
-    if (!form.projectName.trim())     e.projectName = 'Project name is required';
-    if (!form.industryType)           e.industryType = 'Industry type is required';
-    if (form.panelTypes.length === 0) e.panelTypes = 'Select at least one panel type';
-    if (!form.supplyVoltage)          e.supplyVoltage = 'Supply voltage is required';
+    if (!form.companyName.trim())   e.companyName   = 'Company name is required';
+    if (!form.contactPerson.trim()) e.contactPerson = 'Contact person is required';
+    if (!form.mobileNumber.trim())  e.mobileNumber  = 'Mobile number is required';
+    if (!/^\d{10}$/.test(form.mobileNumber.replace(/\s/g,''))) e.mobileNumber = 'Enter a valid 10-digit number';
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Invalid email address';
+    if (!form.projectName.trim())   e.projectName   = 'Project name is required';
+    if (!form.industryType)         e.industryType  = 'Industry type is required';
+    if (form.panelTypes.length === 0) e.panelTypes  = 'Select at least one panel type';
+    if (!form.supplyVoltage)        e.supplyVoltage = 'Supply voltage is required';
     if (form.estimatedValue && isNaN(Number(form.estimatedValue))) e.estimatedValue = 'Must be a number';
-
-    // Validate first contact (required)
-    const primary = form.contacts[0];
-    if (!primary || !primary.name.trim()) e.contact_primary_name = 'Contact name is required';
-    if (primary?.phone && !/^\d{10}$/.test(primary.phone.replace(/\s/g, '')))
-      e.contact_primary_phone = 'Enter a valid 10-digit number';
-    if (primary?.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(primary.email))
-      e.contact_primary_email = 'Invalid email address';
-
-    // Validate additional contacts (optional but if phone/email given, validate format)
-    form.contacts.slice(1).forEach((c, i) => {
-      if (c.phone && !/^\d{10}$/.test(c.phone.replace(/\s/g, '')))
-        e[`contact_${i + 1}_phone`] = 'Invalid number';
-      if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email))
-        e[`contact_${i + 1}_email`] = 'Invalid email';
-    });
-
     return e;
   };
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
+  // ── AI Document Extraction ────────────────────────────────────────────────
+  const handleExtract = async (file) => {
+    setExtracting(true);
+    setExtractedCount(0);
+    try {
+      const fd = new FormData();
+      fd.append('document', file);
+      const { data } = await API.post('/inquiries/extract-from-document', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const extracted = data.data || {};
+      let count = 0;
+      setForm(prev => {
+        const next = { ...prev };
+        const map = {
+          companyName:    extracted.companyName,
+          contactPerson:  extracted.contactPerson,
+          designation:    extracted.designation,
+          mobileNumber:   extracted.phone || extracted.mobileNumber,
+          email:          extracted.email,
+          siteAddress:    extracted.siteAddress || extracted.location,
+          city:           extracted.city,
+          rfqNumber:      extracted.rfqNumber,
+          projectName:    extracted.projectName,
+          industryType:   extracted.industryType,
+          supplyVoltage:  extracted.supplyVoltage || extracted.voltage,
+          frequency:      extracted.frequency,
+          ipRating:       extracted.ipRating,
+          installationType: extracted.installationType,
+          ambientTemp:    extracted.ambientTemp,
+          additionalNotes: extracted.remarks || extracted.additionalNotes,
+          panelTypes:     extracted.panelTypes?.length ? extracted.panelTypes : prev.panelTypes,
+          applicationDescription: extracted.applicationDescription || prev.applicationDescription,
+        };
+        Object.entries(map).forEach(([k, v]) => {
+          if (v !== undefined && v !== null && v !== '') {
+            next[k] = Array.isArray(v) ? v : String(v);
+            count++;
+          }
+        });
+        if (extracted.loadDetails?.length) {
+          next.loadDetails = extracted.loadDetails.map((l, i) => ({ ...DEFAULT_LOAD_ROW(), ...l, id: Date.now() + i }));
+          count++;
+        }
+        return next;
+      });
+      setExtractedCount(count);
+      toast.success(`${count} fields extracted and auto-filled`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Document extraction failed');
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  // ── Submit ─────────────────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
     const errs = validate();
     if (Object.keys(errs).length) {
       setErrors(errs);
+      // Scroll to first error
+      const firstErrEl = document.querySelector('[data-error-field]');
+      firstErrEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       toast.error('Please fix the highlighted errors');
       return;
     }
+
     setSubmitting(true);
     try {
-      const primary = form.contacts[0] || {};
+      // Build legacy-compatible payload
       const payload = {
         ...form,
-        // Legacy single-contact fields — keep for backward compat
-        customerName:  form.companyName,
-        contactPerson: primary.name,
-        mobileNumber:  primary.phone,
-        email:         primary.email,
-        designation:   primary.designation,
-        productType:   form.panelTypes[0] || 'OTHER',
-        location:      form.city || form.siteAddress,
+        customerName: form.companyName,
+        productType:  form.panelTypes[0] || 'OTHER',
+        location:     form.city || form.siteAddress,
         estimatedValue: form.estimatedValue ? Number(form.estimatedValue) : 0,
-        // Resolved IP rating
-        ipRating: form.ipRating === 'OTHER' ? form.ipRatingCustom : form.ipRating,
       };
+
       if (isEdit) {
         await API.put(`/inquiries/${id}`, payload);
         toast.success('Inquiry updated successfully');
@@ -307,7 +303,7 @@ const ElectricalPanelInquiryPage = () => {
     }
   };
 
-  // ─── Page loading ───────────────────────────────────────────────────────────
+  // ─── Page loading ──────────────────────────────────────────────────────────
   if (pageLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -316,7 +312,10 @@ const ElectricalPanelInquiryPage = () => {
     );
   }
 
-  const inputCls = 'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white placeholder-gray-400';
+  // ─── Scroll to section helper ──────────────────────────────────────────────
+  const scrollTo = (i) => {
+    sectionRefs.current[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   // ─────────────────────────────────────────────────────────────────────────────
   // RENDER
@@ -324,7 +323,7 @@ const ElectricalPanelInquiryPage = () => {
   return (
     <div className="fade-in max-w-5xl mx-auto space-y-5 pb-16">
 
-      {/* ── Page Header ──────────────────────────────────────────────────────── */}
+      {/* ── Page Header ─────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <button
@@ -334,24 +333,45 @@ const ElectricalPanelInquiryPage = () => {
             <ChevronLeft size={16} /> Back to Inquiries
           </button>
           <h2 className="text-xl font-bold text-gray-900">
-            {isEdit ? 'Edit Inquiry' : 'New Electrical Panel Inquiry'}
+            {isEdit ? `Edit Inquiry` : 'New Electrical Panel Inquiry'}
           </h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            {isEdit ? 'Update the inquiry details below' : 'Complete all sections. Fields marked * are required.'}
+            {isEdit
+              ? 'Update the inquiry details below'
+              : 'Complete all sections. Fields marked * are required.'}
           </p>
         </div>
+
+        {/* Step indicator */}
         <div className="flex-1 flex justify-end">
           <StepProgressBar steps={SECTIONS} currentStep={activeSection} />
         </div>
       </div>
 
+      {/* ── Document Upload Banner (create mode only) ────────────────────── */}
+      {!isEdit && (
+        <SectionCard
+          number="AI"
+          title="Auto-Fill from Document"
+          subtitle="Upload an RFQ, Word form, or Excel sheet to extract fields automatically"
+          icon={UploadCloud}
+          color="purple"
+        >
+          <DocumentUploader
+            onExtract={handleExtract}
+            extracting={extracting}
+            extractedCount={extractedCount}
+          />
+        </SectionCard>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-5" noValidate>
 
-        {/* ══════════════════════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════════════════════════
             SECTION 1 — CLIENT INFORMATION
-        ══════════════════════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════════════════════════ */}
         <div ref={el => sectionRefs.current[0] = el}>
-          <SectionCard number="1" title="Client Information" subtitle="Company, site address, and contact persons" icon={Building2} color="blue">
+          <SectionCard number="1" title="Client Information" subtitle="Company details, contact person, and site address" icon={Building2} color="blue">
 
             {/* Row 1: Date + RFQ + Company */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -361,7 +381,7 @@ const ElectricalPanelInquiryPage = () => {
               <FormField label="RFQ Number">
                 <Input value={form.rfqNumber} onChange={set('rfqNumber')} placeholder="RFQ-2025-0001" />
               </FormField>
-              <FormField label="Company Name" error={errors.companyName} required>
+              <FormField label="Company Name" error={errors.companyName} required data-error-field>
                 <AutocompleteInput
                   value={form.companyName}
                   onChange={set('companyName')}
@@ -372,17 +392,60 @@ const ElectricalPanelInquiryPage = () => {
               </FormField>
             </div>
 
-            {/* Row 2: City + Site Address */}
+            <FormDivider />
+
+            {/* Row 2: Contact + Designation + Phone */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <FormField label="Contact Person" error={errors.contactPerson} required>
+                <AutocompleteInput
+                  value={form.contactPerson}
+                  onChange={set('contactPerson')}
+                  suggestions={contactSuggestions}
+                  placeholder="e.g. Mr. Manoj Rupala"
+                  error={errors.contactPerson}
+                />
+              </FormField>
+              <FormField label="Designation">
+                <AutocompleteInput
+                  value={form.designation}
+                  onChange={set('designation')}
+                  suggestions={['Director', 'Purchase Manager', 'Project Manager', 'Electrical Engineer', 'Plant Manager', 'CEO', 'GM', 'DGM', 'AGM']}
+                  placeholder="e.g. Director"
+                />
+              </FormField>
+              <FormField label="Mobile Number" error={errors.mobileNumber} required>
+                <Input
+                  type="tel"
+                  value={form.mobileNumber}
+                  onChange={set('mobileNumber')}
+                  placeholder="9712134007"
+                  maxLength={10}
+                  error={errors.mobileNumber}
+                />
+              </FormField>
+            </div>
+
+            {/* Row 3: Alternate + Email + City */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mt-4">
+              <FormField label="Alternate Phone">
+                <Input type="tel" value={form.alternatePhone} onChange={set('alternatePhone')} placeholder="Optional" />
+              </FormField>
+              <FormField label="Email Address" error={errors.email}>
+                <Input type="email" value={form.email} onChange={set('email')} placeholder="contact@company.com" />
+              </FormField>
               <FormField label="City">
                 <AutocompleteInput
                   value={form.city}
                   onChange={set('city')}
-                  suggestions={citySuggestions}
+                  suggestions={citysuggestions}
                   placeholder="e.g. Ahmedabad"
                 />
               </FormField>
-              <FormField label="Location / Site Address" className="sm:col-span-2">
+            </div>
+
+            {/* Row 4: Site Address */}
+            <div className="mt-4">
+              <FormField label="Location / Site Address">
                 <Textarea
                   value={form.siteAddress}
                   onChange={set('siteAddress')}
@@ -391,108 +454,12 @@ const ElectricalPanelInquiryPage = () => {
                 />
               </FormField>
             </div>
-
-            <FormDivider label="Contact Persons" />
-
-            {/* Multiple Contact Persons */}
-            <div className="space-y-3">
-              {form.contacts.map((contact, idx) => {
-                const isPrimary = idx === 0;
-                const phoneErr  = errors[isPrimary ? 'contact_primary_phone' : `contact_${idx}_phone`];
-                const emailErr  = errors[isPrimary ? 'contact_primary_email' : `contact_${idx}_email`];
-                const nameErr   = isPrimary ? errors.contact_primary_name : null;
-
-                return (
-                  <div
-                    key={contact.id}
-                    className={`rounded-xl border p-4 space-y-3 ${isPrimary ? 'border-blue-200 bg-blue-50/30' : 'border-gray-200 bg-gray-50/50'}`}
-                  >
-                    {/* Contact header */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isPrimary ? 'bg-blue-600 text-white' : 'bg-gray-400 text-white'}`}>
-                          {idx + 1}
-                        </div>
-                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                          {isPrimary ? 'Primary Contact' : `Contact ${idx + 1}`}
-                        </span>
-                        {isPrimary && (
-                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Required</span>
-                        )}
-                      </div>
-                      {!isPrimary && (
-                        <button
-                          type="button"
-                          onClick={() => removeContact(contact.id)}
-                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Remove contact"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Contact fields: name + designation + phone + email */}
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      <FormField label="Name" required={isPrimary} error={nameErr}>
-                        <AutocompleteInput
-                          value={contact.name}
-                          onChange={v => updateContact(contact.id, 'name', v)}
-                          suggestions={contactNameSuggestions}
-                          placeholder="e.g. Mr. Manoj Rupala"
-                          error={nameErr}
-                        />
-                      </FormField>
-                      <FormField label="Designation">
-                        <AutocompleteInput
-                          value={contact.designation}
-                          onChange={v => updateContact(contact.id, 'designation', v)}
-                          suggestions={DESIGNATION_OPTIONS}
-                          placeholder="e.g. Director"
-                        />
-                      </FormField>
-                      <FormField label="Phone" error={phoneErr}>
-                        <input
-                          type="tel"
-                          value={contact.phone}
-                          onChange={e => updateContact(contact.id, 'phone', e.target.value)}
-                          placeholder="9712134007"
-                          maxLength={10}
-                          className={`${inputCls} ${phoneErr ? 'border-red-400' : ''}`}
-                        />
-                        {phoneErr && <p className="text-xs text-red-500 mt-0.5 flex items-center gap-1"><AlertCircle size={11} />{phoneErr}</p>}
-                      </FormField>
-                      <FormField label="Email" error={emailErr}>
-                        <input
-                          type="email"
-                          value={contact.email}
-                          onChange={e => updateContact(contact.id, 'email', e.target.value)}
-                          placeholder="contact@company.com"
-                          className={`${inputCls} ${emailErr ? 'border-red-400' : ''}`}
-                        />
-                        {emailErr && <p className="text-xs text-red-500 mt-0.5 flex items-center gap-1"><AlertCircle size={11} />{emailErr}</p>}
-                      </FormField>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Add contact button */}
-              <button
-                type="button"
-                onClick={addContact}
-                className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-4 py-2 rounded-lg border border-dashed border-blue-300 hover:border-blue-500 transition-colors w-full justify-center"
-              >
-                <Plus size={14} />
-                Add Another Contact Person
-              </button>
-            </div>
           </SectionCard>
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════════════════════════
             SECTION 2 — PROJECT DETAILS
-        ══════════════════════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════════════════════════ */}
         <div ref={el => sectionRefs.current[1] = el}>
           <SectionCard number="2" title="Project Details" subtitle="Project name, industry, offer type, and budget" icon={FolderOpen} color="orange">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -524,29 +491,14 @@ const ElectricalPanelInquiryPage = () => {
                   placeholder="Select offer type…"
                 />
               </FormField>
-
-              {/* Priority — read-only for salesperson */}
-              <FormField label="Priority" hint={!canEditPriority ? 'Set by estimation team' : undefined}>
-                {canEditPriority ? (
-                  <SearchableSelect
-                    value={form.priority}
-                    onChange={set('priority')}
-                    options={PRIORITY_OPTIONS}
-                    placeholder="Select priority…"
-                  />
-                ) : (
-                  <div className="flex items-center h-[38px] px-3 rounded-lg border border-gray-200 bg-gray-50">
-                    <span className={`text-sm font-medium ${
-                      form.priority === 'High'   ? 'text-red-600'   :
-                      form.priority === 'Medium' ? 'text-amber-600' : 'text-green-600'
-                    }`}>
-                      {form.priority || '—'}
-                    </span>
-                    <span className="ml-2 text-xs text-gray-400">(read-only)</span>
-                  </div>
-                )}
+              <FormField label="Priority">
+                <SearchableSelect
+                  value={form.priority}
+                  onChange={set('priority')}
+                  options={PRIORITY_OPTIONS}
+                  placeholder="Select priority…"
+                />
               </FormField>
-
               <FormField label="Budget / Estimated Value (₹)" error={errors.estimatedValue}>
                 <Input
                   type="number"
@@ -557,35 +509,12 @@ const ElectricalPanelInquiryPage = () => {
                 />
               </FormField>
             </div>
-
-            {/* Repeat Order — previous inquiry selector */}
-            {form.offerType === 'repeat' && (
-              <div className="mt-4 p-4 rounded-xl border border-amber-200 bg-amber-50/50">
-                <FormField
-                  label="Previous Order / Inquiry Reference"
-                  hint="Select the original inquiry this repeat order is based on"
-                >
-                  <SearchableSelect
-                    value={form.previousOrderRef}
-                    onChange={set('previousOrderRef')}
-                    options={pastInquiries.map(inq => ({
-                      value: String(inq.inquiryId),
-                      label: `#${inq.inquiryId} — ${inq.companyName || ''} — ${inq.projectName || ''}`,
-                    }))}
-                    placeholder="Search past orders…"
-                  />
-                  {pastInquiries.length === 0 && (
-                    <p className="text-xs text-amber-600 mt-1">Loading past orders…</p>
-                  )}
-                </FormField>
-              </div>
-            )}
           </SectionCard>
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════════════════════════
             SECTION 3 — PANEL TYPE & APPLICATION
-        ══════════════════════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════════════════════════ */}
         <div ref={el => sectionRefs.current[2] = el}>
           <SectionCard number="3" title="Panel Type & Application" subtitle="Select one or more panel types required for this project" icon={Zap} color="amber">
             <FormField label="Required Panel Type(s)" error={errors.panelTypes} required hint="You can select multiple panel types">
@@ -597,6 +526,7 @@ const ElectricalPanelInquiryPage = () => {
                 error={errors.panelTypes}
               />
             </FormField>
+
             <div className="mt-4">
               <FormField label="Application / Process Description">
                 <Textarea
@@ -610,9 +540,9 @@ const ElectricalPanelInquiryPage = () => {
           </SectionCard>
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════════════════════════
             SECTION 4 — TECHNICAL SPECIFICATIONS
-        ══════════════════════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════════════════════════ */}
         <div ref={el => sectionRefs.current[3] = el}>
           <SectionCard number="4" title="Technical Specifications" subtitle="Electrical parameters, protection class, and environment" icon={Settings} color="cyan">
 
@@ -644,19 +574,6 @@ const ElectricalPanelInquiryPage = () => {
               </FormField>
             </div>
 
-            {/* Conditional custom IP input */}
-            {form.ipRating === 'OTHER' && (
-              <div className="mt-3">
-                <FormField label="Custom IP Rating" required hint="e.g. IP69K, NEMA 4X">
-                  <Input
-                    value={form.ipRatingCustom}
-                    onChange={set('ipRatingCustom')}
-                    placeholder="Enter custom IP / protection class…"
-                  />
-                </FormField>
-              </div>
-            )}
-
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mt-4">
               <FormField label="Installation Type">
                 <SearchableSelect
@@ -684,13 +601,20 @@ const ElectricalPanelInquiryPage = () => {
               </FormField>
             </div>
 
-            {/* Ambient Temp removed. Busbar material (2 options) + Enclosure Standard */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mt-4">
+              <FormField label="Ambient Temperature">
+                <AutocompleteInput
+                  value={form.ambientTemp}
+                  onChange={set('ambientTemp')}
+                  suggestions={['0–35°C', '30–45°C', '35–50°C', '–10 to 55°C', '–20 to 60°C']}
+                  placeholder="e.g. 30–45°C"
+                />
+              </FormField>
               <FormField label="Busbar Material">
                 <SearchableSelect
                   value={form.busbarMaterial}
                   onChange={set('busbarMaterial')}
-                  options={BUSBAR_MATERIALS}
+                  options={['Aluminium', 'Copper', 'Tinned Copper', 'Silver Plated Copper']}
                   placeholder="Select busbar material…"
                 />
               </FormField>
@@ -706,14 +630,15 @@ const ElectricalPanelInquiryPage = () => {
           </SectionCard>
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════════════════════════
             SECTION 5 — LOAD DETAILS
-        ══════════════════════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════════════════════════ */}
         <div ref={el => sectionRefs.current[4] = el}>
-          <SectionCard number="5" title="Load Details" subtitle="List all loads — editing kW, HP, or Ampere auto-fills the other two" icon={FileText} color="green">
+          <SectionCard number="5" title="Load Details" subtitle="List all loads to be connected to this panel" icon={FileText} color="green">
             <DynamicLoadTable
               rows={form.loadDetails}
               onChange={set('loadDetails')}
+              ratingUnits={RATING_UNITS}
             />
             <p className="mt-2 text-xs text-gray-400 flex items-center gap-1">
               <Info size={12} /> Add all motors, drives, starters, and other loads. Include partial loads too.
@@ -721,11 +646,12 @@ const ElectricalPanelInquiryPage = () => {
           </SectionCard>
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════════════
-            SECTION 6 — CONTROL & MONITORING
-        ══════════════════════════════════════════════════════════════════════ */}
+        {/* ════════════════════════════════════════════════════════════════════
+            SECTION 6 — CONTROL & MONITORING REQUIREMENTS
+        ════════════════════════════════════════════════════════════════════ */}
         <div ref={el => sectionRefs.current[5] = el}>
           <SectionCard number="6" title="Control & Monitoring Requirements" subtitle="Check all required components and specify preferred brands" icon={Cpu} color="purple">
+
             <div className="mb-4 flex items-center gap-4">
               <FormField label="Control Type">
                 <SearchableSelect
@@ -737,6 +663,7 @@ const ElectricalPanelInquiryPage = () => {
                 />
               </FormField>
             </div>
+
             <ControlMatrixTable
               components={CONTROL_COMPONENTS}
               value={form.controlMatrix}
@@ -745,11 +672,12 @@ const ElectricalPanelInquiryPage = () => {
           </SectionCard>
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════════════════════════
             SECTION 7 — STANDARDS & COMPLIANCE
-        ══════════════════════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════════════════════════ */}
         <div ref={el => sectionRefs.current[6] = el}>
           <SectionCard number="7" title="Standards, Compliance & Delivery" subtitle="Mounting type, certifications, delivery terms, and timeline" icon={Shield} color="rose">
+
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <FormField label="Panel Mounting Type">
                 <SearchableSelect
@@ -836,9 +764,9 @@ const ElectricalPanelInquiryPage = () => {
           </SectionCard>
         </div>
 
-        {/* ══════════════════════════════════════════════════════════════════════
+        {/* ════════════════════════════════════════════════════════════════════
             SECTION 8 — ADDITIONAL NOTES & INTERNAL REVIEW
-        ══════════════════════════════════════════════════════════════════════ */}
+        ════════════════════════════════════════════════════════════════════ */}
         <div ref={el => sectionRefs.current[7] = el}>
           <SectionCard number="8" title="Additional Notes & Internal Review" subtitle="Comments, remarks, and internal technical review fields" icon={ClipboardCheck} color="slate">
 
@@ -851,6 +779,7 @@ const ElectricalPanelInquiryPage = () => {
                   rows={3}
                 />
               </FormField>
+
               <FormField label="Prepared By">
                 <Input
                   value={form.preparedBy || user?.name || ''}
@@ -862,6 +791,7 @@ const ElectricalPanelInquiryPage = () => {
 
             <FormDivider label="Internal Use Only" />
 
+            {/* Internal review — only for manager/admin or in edit mode */}
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-4">
               <div className="flex items-center gap-2 mb-1">
                 <AlertCircle size={14} className="text-amber-600" />
@@ -882,7 +812,10 @@ const ElectricalPanelInquiryPage = () => {
                   <SearchableSelect
                     value={form.status}
                     onChange={set('status')}
-                    options={['New', 'Under Discussion', 'Quotation Submit', 'Negotiation', 'Order Recieved', 'Inquiry Hold', 'Inq. Lost']}
+                    options={[
+                      'New', 'Under Discussion', 'Quotation Submit',
+                      'Negotiation', 'Order Recieved', 'Inquiry Hold', 'Inq. Lost',
+                    ]}
                     placeholder="Select status…"
                   />
                 </FormField>
@@ -899,9 +832,9 @@ const ElectricalPanelInquiryPage = () => {
           </SectionCard>
         </div>
 
-        {/* ── Sticky Submit Bar ─────────────────────────────────────────────── */}
+        {/* ── Sticky Submit Bar ──────────────────────────────────────────────── */}
         <div className="sticky bottom-0 bg-white border-t border-gray-200 shadow-lg rounded-xl px-6 py-4 flex items-center justify-between gap-4 z-30">
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex items-center gap-2 text-sm text-gray-500">
             {Object.keys(errors).length > 0 ? (
               <>
                 <AlertCircle size={16} className="text-red-500" />
@@ -914,11 +847,21 @@ const ElectricalPanelInquiryPage = () => {
               </>
             )}
           </div>
+
           <div className="flex items-center gap-3">
-            <Button type="button" variant="outline" onClick={() => navigate('/inquiries')}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate('/inquiries')}
+            >
               Cancel
             </Button>
-            <Button type="submit" variant="primary" loading={submitting} className="min-w-[160px]">
+            <Button
+              type="submit"
+              variant="primary"
+              loading={submitting}
+              className="min-w-[160px]"
+            >
               {submitting
                 ? (isEdit ? 'Updating…' : 'Submitting…')
                 : (isEdit ? 'Update Inquiry' : 'Submit Inquiry')}

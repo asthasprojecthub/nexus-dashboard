@@ -1,14 +1,13 @@
 import axios from 'axios';
 
 const API = axios.create({
-  // baseURL: '/api',
-  baseURL: 'https://nexus-dashboard-ij0d.onrender.com/api',
+  baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Attach token to every request
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
+
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -16,7 +15,6 @@ API.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 globally
 API.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -25,6 +23,7 @@ API.interceptors.response.use(
       localStorage.removeItem('user');
       window.location.href = '/auth/login';
     }
+
     return Promise.reject(error);
   }
 );

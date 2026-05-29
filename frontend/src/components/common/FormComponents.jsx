@@ -88,7 +88,7 @@ export const CardHeader = ({ title, subtitle, actions, className = '' }) => (
     {actions && <div className="flex items-center gap-2">{actions}</div>}
   </div>
 );
-
+  
 export const CardBody = ({ children, className = '' }) => (
   <div className={`p-6 ${className}`}>{children}</div>
 );
